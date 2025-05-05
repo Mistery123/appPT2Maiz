@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Leaflet Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html,
+    body,
+    #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <script>
+    function iniciarMapa() {
+      const anomalia = window.dataFromApp?.anomalia;
+      const puntos = window.dataFromApp?.coordenadas || [];
+
+      const lat = anomalia?.latitud;
+      const lon = anomalia?.longitud;
+
+      const map = L.map('map').setView([lat, lon], 15);
+
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles © Esri'
+      }).addTo(map);
+
+      L.marker([lat, lon])
+        .addTo(map)
+        .bindPopup("📍 Anomalía detectada")
+        .openPopup();
+
+      puntos.forEach(p => {
+        L.marker([p.lat, p.lon])
+          .addTo(map)
+          .bindPopup("📷 " + p.frame + "<br/>Altitud: " + p.alt + " m");
+      });
+    }
+
+    // Esperar hasta que los datos se inyecten
+    const esperarDatos = setInterval(() => {
+      if (window.dataFromApp?.anomalia) {
+        clearInterval(esperarDatos);
+        iniciarMapa();
+      }
+    }, 100);
+  </script>
+
+</body>
+
+</html>
