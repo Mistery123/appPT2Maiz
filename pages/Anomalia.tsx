@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,129 +6,149 @@ import {
   Dimensions,
   TouchableOpacity,
   Alert,
-  ScrollView
+  ScrollView,
+  Image,
 } from 'react-native';
-import { useRoute, RouteProp } from '@react-navigation/native';
-import { Video, ResizeMode } from 'expo-av';
+import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
 import axios from 'axios';
+import Modal from 'react-native-modal';
+import ImageViewer from 'react-native-image-zoom-viewer';
 
 import { RootStackParamList } from '../types/RootStackParamList';
-import coordenadas from '../assets/mapeo_coordenadas'; // archivo .js con array de coordenadas exportado
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { API_BASE_URL } from '../config';
 
 const windowWidth = Dimensions.get('window').width;
 
 export default function AnomaliaScreen() {
   const route = useRoute<RouteProp<RootStackParamList, 'Anomalia'>>();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { anomalia, reporte } = route.params;
 
-  const videoRef = useRef<Video>(null);
-  const [videoReady, setVideoReady] = useState(false);
   const [ubicacionNombre, setUbicacionNombre] = useState('Cargando ubicación...');
   const [menuVisible, setMenuVisible] = useState(false);
-  const [puntoMarcado, setPuntoMarcado] = useState<{ lat: number; lon: number } | null>(null);
-  const [puntosGuardados, setPuntosGuardados] = useState<
-    { lat: number; lon: number; tiempo: number }[]
-  >([]);
+  const [modalVisible, setModalVisible] = useState(false);
 
-  const videoUri = `http://192.168.5.151:3000/videos/${reporte.nombreArchivo.replace(
-    'NOPROCESADO',
-    'PROCESADO'
-  )}`;
-
-  const onWebViewMessage = (event: any) => {
-    const data = JSON.parse(event.nativeEvent.data);
-    setPuntoMarcado({ lat: data.lat, lon: data.lon });
-    Alert.alert('📍 Punto tocado', `Lat: ${data.lat.toFixed(6)}\nLon: ${data.lon.toFixed(6)}`);
-  };
+  const folderName = reporte.nombreArchivo.replace('_NOPROCESADO.mp4', '');
+  const frameUri = `${API_BASE_URL}/frames/${folderName}/${anomalia.nombreFrame}`;
 
   const injectedJS = `
-  window.dataFromApp = {
-    coordenadas: ${JSON.stringify(coordenadas)},
-    anomalia: ${JSON.stringify(anomalia)}
-  };
-  true;
-`;
-
+    window.dataFromApp = {
+      coordenadas: [],
+      anomalia: {
+        latitud: ${anomalia.latitud},
+        longitud: ${anomalia.longitud}
+      }
+    };
+    true;
+  `;
 
   useEffect(() => {
     axios
-      .get(`http://192.168.5.151:3000/ubicacion/${anomalia.latitud}/${anomalia.longitud}`)
+      .get(`${API_BASE_URL}/ubicacion/${anomalia.latitud}/${anomalia.longitud}`)
       .then((res) => setUbicacionNombre(res.data.nombre || 'Ubicación desconocida'))
       .catch(() => setUbicacionNombre('Ubicación desconocida'));
   }, []);
 
-  useEffect(() => {
-    if (videoReady && videoRef.current && anomalia.minutoDetectado) {
-      const seconds = anomalia.minutoDetectado * 60;
-      videoRef.current.setPositionAsync(seconds * 1000);
+  const handleAttendOption = async (option: string) => {
+    setMenuVisible(false);
+    let endpoint = '';
+    let destinoCerca: keyof RootStackParamList;
+    let destinoLejos: keyof RootStackParamList;
+
+    if (option === 'Aérea') {
+      endpoint = 'coordenadasUAVEB';
+      destinoCerca = 'UAVCercaEB';
+      destinoLejos = 'UAVNoCercaEB';
+    } else if (option === 'Terrestre') {
+      endpoint = 'coordenadasUGVEB';
+      destinoCerca = 'UGVCercaEB';
+      destinoLejos = 'UGVNoCercaEB';
+    } else {
+      return;
     }
-  }, [videoReady]);
 
-  const marcarMomentoDelVideo = async () => {
-    if (videoRef.current && puntoMarcado) {
-      const status = await videoRef.current.getStatusAsync();
+    try {
+      const res = await axios.get(`${API_BASE_URL}/${endpoint}`);
+      const distancia = res.data.distancia;
 
-      if ('positionMillis' in status && status.isLoaded) {
-        const tiempoSegundos = status.positionMillis / 1000;
-      
-        const nuevoPunto = {
-          lat: puntoMarcado.lat,
-          lon: puntoMarcado.lon,
-          tiempo: parseFloat(tiempoSegundos.toFixed(2))
-        };
-      
-        setPuntosGuardados([...puntosGuardados, nuevoPunto]);
-        Alert.alert(
-          '📌 Punto guardado',
-          `Lat: ${nuevoPunto.lat.toFixed(6)}\nLon: ${nuevoPunto.lon.toFixed(6)}\nSegundo: ${nuevoPunto.tiempo}`
-        );
+      if (distancia > 50) {
+        navigation.navigate(destinoLejos, { anomalia, reporte });
+      } else {
+        navigation.navigate(destinoCerca, { anomalia, reporte });
       }
-      
+    } catch (error) {
+      console.error(`Error al consultar /${endpoint}:`, error);
+      Alert.alert('Error', `No se pudo calcular la distancia (${option}).`);
     }
   };
 
-  const handleAttendOption = (option: string) => {
-    console.log('Atender vía:', option);
-    setMenuVisible(false);
+  const eliminarAnomalia = async () => {
+    Alert.alert(
+      'Descartar Anomalía',
+      '¿Estás seguro de que deseas descartar esta anomalía?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Descartar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await axios.delete(`${API_BASE_URL}/anomalias/${anomalia.id}`);
+              Alert.alert('Anomalía descartada');
+              navigation.navigate('Principal');
+            } catch (error) {
+              console.error('Error al descartar la anomalía:', error);
+              Alert.alert('Error', 'No se pudo descartar la anomalía.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Posible Anomalía {anomalia.id}</Text>
+      <Text style={styles.title}>Posible Anomalía</Text>
 
-      <Video
-        ref={videoRef}
-        source={{ uri: videoUri, overrideFileExtensionAndroid: '.mp4' }}
-        useNativeControls
-        resizeMode={ResizeMode.CONTAIN}
-        shouldPlay
-        onReadyForDisplay={() => setVideoReady(true)}
-        style={styles.video}
-      />
+      <TouchableOpacity onPress={() => setModalVisible(true)}>
+        <Image
+          source={{ uri: frameUri }}
+          style={styles.video}
+          resizeMode="contain"
+        />
+      </TouchableOpacity>
+
+      <Modal
+        isVisible={modalVisible}
+        onBackdropPress={() => setModalVisible(false)}
+        onBackButtonPress={() => setModalVisible(false)}
+        style={{ margin: 0, backgroundColor: '#000' }}
+      >
+        <ImageViewer
+          imageUrls={[{ url: frameUri }]}
+          enableSwipeDown={true}
+          onSwipeDown={() => setModalVisible(false)}
+          backgroundColor="#000"
+        />
+      </Modal>
 
       <View style={styles.mapContainer}>
         <WebView
           source={require('../assets/leafletMap.html')}
           injectedJavaScript={injectedJS}
           javaScriptEnabled={true}
-          onMessage={onWebViewMessage}
           style={styles.map}
         />
       </View>
-
-      <TouchableOpacity onPress={marcarMomentoDelVideo} style={styles.attendButton}>
-        <Text style={styles.buttonText}>Guardar Punto</Text>
-      </TouchableOpacity>
 
       <Text style={styles.label}>🗺️ Ubicación:</Text>
       <Text style={styles.text}>{ubicacionNombre}</Text>
 
       <Text style={styles.label}>📅 Fecha y Hora:</Text>
       <Text style={styles.text}>{reporte.fechaGeneracion}</Text>
-
-      <Text style={styles.label}>⏱ Minuto:</Text>
-      <Text style={styles.text}>{anomalia.minutoDetectado}</Text>
 
       <View style={styles.buttonsContainer}>
         <View style={styles.buttonWrapper}>
@@ -137,9 +157,13 @@ export default function AnomaliaScreen() {
               <TouchableOpacity onPress={() => handleAttendOption('Aérea')} style={styles.dropdownItem}>
                 <Text style={styles.dropdownText}>VÍA AÉREA</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleAttendOption('Terrestre')} style={styles.dropdownItem}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('UGVCercaEB', { anomalia, reporte })}
+                style={styles.dropdownItem}
+              >
                 <Text style={styles.dropdownText}>VÍA TERRESTRE</Text>
               </TouchableOpacity>
+
             </View>
           )}
 
@@ -151,28 +175,23 @@ export default function AnomaliaScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.discardButton}>
+        <TouchableOpacity style={styles.discardButton} onPress={eliminarAnomalia}>
           <Text style={styles.buttonText}>DESCARTAR</Text>
         </TouchableOpacity>
       </View>
-
-      {puntosGuardados.length > 0 && (
-        <>
-          <Text style={[styles.label, { marginTop: 20 }]}>📍 Puntos Guardados:</Text>
-          {puntosGuardados.map((p, index) => (
-            <Text key={index} style={styles.text}>
-              {index + 1}. Lat: {p.lat.toFixed(6)}, Lon: {p.lon.toFixed(6)}, Tiempo: {p.tiempo}s
-            </Text>
-          ))}
-        </>
-      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { padding: 16, backgroundColor: '#fff', flexGrow: 1 },
-  title: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 12,
+    marginTop: 40,
+  },
   video: {
     width: windowWidth - 32,
     height: (windowWidth - 32) * 9 / 16,
@@ -216,7 +235,7 @@ const styles = StyleSheet.create({
     marginVertical: 8,
   },
   discardButton: {
-    backgroundColor: '#000',
+    backgroundColor: '#9F2241',
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 20,

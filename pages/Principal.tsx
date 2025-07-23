@@ -1,10 +1,28 @@
 import React from 'react';
-import { Text, StyleSheet, Pressable, StatusBar, View } from 'react-native';
+import { Text, StyleSheet, Pressable, StatusBar, View, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
+import axios from 'axios';
+import { API_BASE_URL } from '../config';
 
 export default function Principal() {
   const navigation = useNavigation<any>();
+
+  const handleIniciarDeteccion = async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/coordenadasUAVEB`);
+      const distancia = res.data.distancia;
+
+      if (distancia <= 50) {
+        navigation.navigate('IniciarDeteccion');
+      } else {
+        navigation.navigate('UAVNoCercaEB');
+      }
+    } catch (error) {
+      console.error('Error al obtener coordenadas:', error);
+      Alert.alert('Error', 'No se pudo calcular la distancia UAV-EB');
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -34,7 +52,7 @@ export default function Principal() {
           </LinearGradient>
         </Pressable>
 
-        <Pressable android_ripple={{ color: 'transparent' }} onPress={() => navigation.navigate('IniciarDeteccion')}>
+        <Pressable android_ripple={{ color: 'transparent' }} onPress={handleIniciarDeteccion}>
           <LinearGradient
             colors={['#165222', '#0d2e12']}
             start={{ x: 0, y: 0 }}
@@ -48,7 +66,6 @@ export default function Principal() {
     </View>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: {
